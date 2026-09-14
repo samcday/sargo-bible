@@ -1,304 +1,265 @@
 # Fingerprint — Google Pixel 3a (`google/sargo`)
 
-> **Status: working end-to-end.** Native enrollment via GNOME Settings and
-> fingerprint unlock of the Phosh lockscreen **passed acceptance on
-> `sam-sargo` on 2026-09-13**, with SELinux enforcing and PIN fallback intact.
-> Public acceptance record: [samcday/sam-sargo#11](https://github.com/samcday/sam-sargo/issues/11).
->
-> Accepted stack: kernel `7.1.2-0.pocketfed.sdm670.12.fc46` · libfprint
-> `1.94.100-1.6.pocketfed.fc46` · gnome-control-center `51~rc.1-1.2.fingerprint.fc46`
-> · phosh `0.57.0-1.5.fingerprint.fc46` · stock fprintd (no fork needed for
-> D-Bus/PAM integration).
+**Status.** The sargo fingerprint stack is understood end to end: hardware
+wiring, the split between normal world and secure world, the trusted
+application's command interface, and the authorization chain that gates
+enrollment. The proof is an independent Linux implementation that enrolls and
+matches fingers on real hardware (§8). Evidence classes are defined in
+[CLANKER-README.md](CLANKER-README.md); the stock build, kernel commit and
+binary hashes referenced below are pinned in [provenance.md](provenance.md).
 
-Everything in this page is either (a) verifiable in Google's published kernel
-sources, (b) measured from a retained stock vendor partition pinned to an exact
-Android build, or (c) implemented and acceptance-tested in
-[samcday/pocketfed](https://github.com/samcday/pocketfed) and
-[samcday/linux](https://github.com/samcday/linux). Volatile third-party pages
-are deep-linked to permanent archive.org snapshots captured 2026-09-14.
-
----
+Shorthand: `TA` = QSEE trusted application, `HAL` = the stock Android
+fingerprint service, `HAT` = hardware authentication token.
 
 ## 1. Hardware
 
 | Fact | Value | Evidence |
 | --- | --- | --- |
-| Sensor | Rear-mounted FPC1020-family touch sensor | stock DT compatible `fpc,fpc1020` — [Google kernel source](https://android.googlesource.com/kernel/msm/+/refs/heads/android-msm-bonito-4.9-android12L/arch/arm64/boot/dts/google/sdm670-b4s4-fingerprint.dtsi) ([archived](https://web.archive.org/web/20260914050018/https://android.googlesource.com/kernel/msm/+/refs/heads/android-msm-bonito-4.9-android12L/arch/arm64/boot/dts/google/sdm670-b4s4-fingerprint.dtsi)) |
-| IRQ | **TLMM GPIO 121**, `bias-pull-down`, drive-strength 2 | same DT: `interrupts = <121 0x0>`, `fpc,gpio_irq = <&tlmm 121 0x0>` |
-| Reset | **TLMM GPIO 134**, pinctrl states `fpc_reset_low` / `fpc_reset_high` | same DT: `fpc,gpio_rst = <&tlmm 134 0x0>` |
-| Bus | Not a Linux-visible SPI device; sensor commands go through TrustZone | live sargo: only `spi0.0` (`rt5514` audio) — [feasibility inventory](https://github.com/samcday/sam-sargo/issues/11) |
-| SoC | Qualcomm SDM670; QSEE reserved region `qseecom@9e400000`, 20 MiB | live device tree, 2026-09-10 inventory (`devices/google-sargo/diagnostics/2026-09-10-fingerprint/` in pocketfed) |
+| Sensor family | FPC1020-class touch sensor, rear mounted | `[G]` DT compatible `fpc,fpc1020` in [`sdm670-b4s4-fingerprint.dtsi`](https://android.googlesource.com/kernel/msm/+/ab4493f31457eea175568b18b8300d4d12aaeea8/arch/arm64/boot/dts/google/sdm670-b4s4-fingerprint.dtsi) (vendored copy: [`vendor/`](vendor/kernel-msm-ab4493f31457eea175568b18b8300d4d12aaeea8/arch/arm64/boot/dts/google/sdm670-b4s4-fingerprint.dtsi)) |
+| Interrupt line | TLMM GPIO 121, input, `bias-pull-down`, drive strength 2, rising edge | `[G]` same dtsi; driver requests `IRQF_TRIGGER_RISING \| IRQF_ONESHOT` |
+| Reset line | TLMM GPIO 134, output, `bias-disable`; pinctrl states `fpc_reset_low` / `fpc_reset_high` | `[G]` same dtsi |
+| Node is in the shipped DT | `fp_fpc1020` with the same two GPIOs appears in every sargo (`S4`) overlay inside Google's `dtbo.img` for build SP2A.220505.008 | `[G]` factory image, `dtbo.img` entries 1/3/5/7/9 (`model = "Google Inc. MSM sdm670 S4 …"`, `compatible = "google,b4s4-sdm670"`) |
+| No Linux-visible sensor bus | The DT declares no SPI/I2C child for the sensor. On a running sargo the only SPI device is `spi0.0` (`rt5514` audio) | `[G]` DT; `[M]` daily unit, 2026-09-10 |
+| Regulators | None declared for the sensor in the sargo DT; the driver's optional regulator lookups are unused | `[G]` dtsi vs driver `vreg_conf` table |
+| Part revision | Not measured. `fpc,fpc1020` names the driver family, not a die step | open, §10 |
 
-The compatible string establishes the **driver family, not a measured part
-revision** — treat "FPC1020" as the interface contract, not a die-step claim.
+Shipped DT node (from the `S4 PVT` overlay, decompiled; identical in source):
 
-## 2. Stock (Android) software architecture
-
-### 2.1 Firmware provenance — the last build Google ever shipped
-
-The retained stock vendor on `sam-sargo` identifies as:
-
+```dts
+fp_fpc1020 {
+        status = "ok";
+        compatible = "fpc,fpc1020";
+        interrupt-parent = <&tlmm>;
+        interrupts = <121 0x0>;
+        fpc,gpio_rst = <&tlmm 134 0x0>;
+        fpc,gpio_irq = <&tlmm 121 0x0>;
+        pinctrl-names = "fpc1020_reset_reset", "fpc1020_reset_active", "fpc1020_irq_active";
+        pinctrl-0 = <&fpc_reset_low>;
+        pinctrl-1 = <&fpc_reset_high>;
+        pinctrl-2 = <&fpc_irq_default>;
+};
 ```
-google/sargo/sargo:12/SP2A.220505.008/8782922:user/release-keys
-security patch 2022-05-05
-```
 
-**SP2A.220505.008 is the final sargo OTA**: guaranteed updates ended May 2022
-([Google's Pixel update schedule](https://support.google.com/pixelphone/answer/4457705?hl=en),
-[archived 2026-09-14](https://web.archive.org/web/20260914050228/https://support.google.com/pixelphone/answer/4457705?hl=en));
-Google shipped one farewell build replacing SP2A.220505.006
-([XDA](https://www.xda-developers.com/google-pixel-3a-and-pixel-3a-xl-september-security-update/),
-[9to5Google](https://9to5google.com/2022/06/07/pixel-3a-last-update/)).
-So every stock fingerprint binary described below is from the **terminal
-firmware release** for this device — there is no newer vendor side to chase.
+The sensor's SPI bus is owned by the secure world. Normal-world Linux controls
+only reset and observes only the interrupt.
 
-A second handset (`test-sargo`, vendor `SP2A.220505.002`) carries
-**byte-identical** fingerprint/common-library firmware — all 16 files hash-equal
-across both builds (measured 2026-09-13, `fingerprint-trial/lab/` records).
+## 2. Stock software split
 
-### 2.2 The binary set (16 files)
+Who does what in build SP2A.220505.008. Hashes are in provenance.md §5.
 
-Extracted read-only from `/dev/mapper/vendor_b` via `debugfs` (no mount, no
-write), pinned in `devices/google-sargo/fingerprint-trial/firmware-manifest.json`:
+| Component | Where | Role | Evidence |
+| --- | --- | --- | --- |
+| `fpc1020_platform_tee.c` | kernel, `CONFIG_FPC_FINGERPRINT=y` in `bonito_defconfig` | Electrical control only: reset, IRQ, wakeup. Exposes sysfs `hw_reset`, `wakeup_enable`, `irq` (read = level, write = ack), `regulator_enable`, `device_prepare`, `pinctl_set`, `clk_enable` (stub). Threaded rising-edge IRQ; wakeup source `fpc_ttw_ws`. Header comment: "This driver will NOT send any commands to the sensor" | `[G]` [driver source](https://android.googlesource.com/kernel/msm/+/ab4493f31457eea175568b18b8300d4d12aaeea8/drivers/input/misc/fpc_fingerprint/fpc1020_platform_tee.c) |
+| `qseecom` | kernel, `CONFIG_QSEECOM=y`; `/dev/qseecom` | Loads TAs and common libraries into QSEE, routes commands, hosts listener callbacks | `[G]` [`qseecom.h`](https://android.googlesource.com/kernel/msm/+/ab4493f31457eea175568b18b8300d4d12aaeea8/include/uapi/linux/qseecom.h), [`qseecomi.h`](https://android.googlesource.com/kernel/msm/+/ab4493f31457eea175568b18b8300d4d12aaeea8/include/soc/qcom/qseecomi.h) |
+| `qseecomd` | `/vendor/bin/qseecomd` | Registers the machine-wide listener services (filesystem, RPMB, …) that TAs call back into | `[S]` present in vendor image |
+| `libQSEEComAPI.so` | `/vendor/lib64` | Userspace wrapper over `/dev/qseecom` ioctls | `[S]` |
+| `android.hardware.biometrics.fingerprint@2.1-service.fpc` | `/vendor/bin/hw` | The HAL: drives the kernel sysfs nodes and sends every TA command. Links `libQSEEComAPI.so`, `com.fingerprints.extension@1.0.so`, HIDL fingerprint 2.1/2.2 | `[S]` ELF `DT_NEEDED` |
+| `fpctzappfingerprint` | `/vendor/firmware/*.mdt,*.b00–b07` | The TA: sensor control over secure SPI, image capture, template matching, enrollment authorization | `[S]` |
+| `cmnlib64` | `/vendor/firmware/cmnlib64.*` and fixed partitions `cmnlib64_a/b` | QSEE common library the TA links (`DT_NEEDED libcmnlib.so`); ELF64 class selects `cmnlib64`, not `cmnlib` | `[S]`, `[G]` bootloader package |
+| `keymaster64` | fixed partitions `keymaster_a/b` (loaded by the bootloader, not by Android) | Keymaster **and** Gatekeeper live in this one TA. Issues the wrapped HAT-signing key to FPC; signs HATs on credential verification | `[S]` §5 |
+| RPMB | eMMC RPMB region, 16 MiB, enhanced RPMB | Gatekeeper's credential table; reached through the RPMB listener | `[M]` eMMC capability metadata |
 
-- **`fpctzappfingerprint`** (QSEE trusted application): `.mbn` = **691,540
-  bytes, ELF64 / AArch64** (machine 183, **8 program headers**),
-  SHA-256 `e947fd8b081b47be9bd75c87cbd95a79fd8955b9d3310631680ca47fd76997e8`.
-  Shipped as `.mdt` + `.b00`–`.b07`; raw `.mdt` = `.b00`+`.b01`. **Zero ELF
-  section headers** — but dynamic symbols are retained, which is how the
-  command interface was recovered.
-- **`cmnlib64`** (QSEE common library): ELF64, 6 program headers, `.mdt` +
-  `.b00`–`.b05`.
-- Android-side userspace in the same vendor image: `/bin/hw/android.hardware.biometrics.fingerprint@2.1-service.fpc`,
-  `/lib64/libQSEEComAPI.so`, `com.fingerprints.extension@1.0.so`, `/bin/qseecomd`.
-  The HAL's ELF dependency table names `libQSEEComAPI.so` directly.
+## 3. QSEE and application loading
 
-An Android-9-era Pixel 3a boot trace shows the same TA loading in stock use:
-[tanyeun's gist](https://gist.github.com/tanyeun/64a7a54410b14195aac60c8bca8285ab)
-([archived](https://web.archive.org/web/20260914045252/https://gist.github.com/tanyeun/64a7a54410b14195aac60c8bca8285ab)).
-
-### 2.3 Who does what
-
-- **Stock kernel driver** `drivers/input/misc/fpc_fingerprint/fpc1020_platform_tee.c`
-  (`CONFIG_FPC_FINGERPRINT`) —
-  [source](https://android.googlesource.com/kernel/msm/+/refs/heads/android-msm-bonito-4.9-android12L/drivers/input/misc/fpc_fingerprint/fpc1020_platform_tee.c)
-  ([archived](https://web.archive.org/web/20260914050043/https://android.googlesource.com/kernel/msm/+/refs/heads/android-msm-bonito-4.9-android12L/drivers/input/misc/fpc_fingerprint/fpc1020_platform_tee.c)) —
-  supplies GPIO/reset electrical control and a polled sysfs IRQ **only**. It
-  sends no sensor commands and does no matching. All biometrics live in the TA.
-- **QSEE secure world** executes `fpctzappfingerprint`; userspace reaches it
-  through the legacy QSEECOM `ioctl` API via `libQSEEComAPI.so`/`qseecomd`.
-- **Enrollment is authorization-gated**: the TA demands a **signed hardware
-  authentication token**, minted by Gatekeeper/Keymaster against an FPC-provided
-  challenge (measured on-device; see §4.3).
-
-## 3. Secure-world contract (measured on sargo)
-
-> Sources: dynamic-symbol recovery of the sargo TA + HAL, on-device probing
-> during the Sep 2026 trial (thread + `fingerprint-trial/` records), cross-checked
-> against the Pixel 3 / blueline protocol reconstruction in
-> [SouveraineOS task 44](https://forge.caseytunturi.com/Fimeg/SouveraineOS/src/branch/public/docs/tasks/44-fingerprint-fpc1020.md)
-> ([archived](https://web.archive.org/web/20260914045432/https://forge.caseytunturi.com/Fimeg/SouveraineOS/raw/branch/public/docs/tasks/44-fingerprint-fpc1020.md)).
-
-### 3.1 App loading (legacy QSEECOM)
-
-- Boot log reports QSEECOM version `0x1400000`; a `GET_QSEECOM_INFO`-style
-  version query reaches secure firmware out of the box.
-- `LOAD_APP` = app-manager command 1 (`TZ_OS_APP_START_ID`), three value
-  params `(mdt_len, img_len, phys)`. The image is the `.mdt` ELF header blob
-  plus one `.bNN` per program header, reassembled **contiguously at
-  `p_paddr`-relative offsets** in `dma_alloc_coherent` memory under a 32-bit
-  DMA mask.
-- Sargo's TA is **ELF64** — downstream QSEECOM images of this generation are
-  64-bit, which the stock transport on mainline did not support (§5.1).
-- A machine-wide QSEE **storage listener** (one receiver per device, not per
-  app) must exist for TA filesystem access; listener id `0x5000` (ssd) is
-  registrable against the signed TZ image (blueline doc).
-
-### 3.2 FPC TA command interface
-
-Commands travel in a shared **0x58-byte aux buffer** whose first two words are
-`0x0A` (target 10 base marker) and the command id; larger payloads go in a
-second buffer.
-
-| Target | Cmd | Meaning |
+| Fact | Value | Evidence |
 | --- | --- | --- |
-| 10 (sensor) | 0 | `init` |
-| 10 | 3 | `wakeup_setup` (arm) |
-| 10 | 5 | `deep_sleep` |
-| 10 | 1 | `check_finger_lost` |
-| 10 | 4 | `qualify_capture` |
-| 11 (bio) | 0 / 1 / 2 | `begin_enrol` / `enrol` / `end_enrol` |
-| 11 | 3 | `identify` |
-| 11 | 6 / 9 | `load_empty_db` / `set_active_fingerprint_set` |
-| 11 | 7 / 8 | `get_template_ids` / `delete_template` |
-| 2 | — | template persistence (machine-wide QSEE storage listener) |
+| QSEE version | `0x1400000` | `[M]` reported at boot on both units. ≥ `QSEE_VERSION_40` (`0x1000000`), so the kernel uses the 64-bit request structs |
+| Secure-app region | `qseecom@86d00000`, `reg = <0x86d00000 0x2200000>`, `qcom,appsbl-qseecom-support`, `qcom,qsee-reentrancy-support = <2>` | `[G]` `sdm670.dtsi`; present in the shipped base DTB |
+| Reserved memory | `qseecom_region@0x9e400000`, 20 MiB, `no-map`; `qseecom_ta_region`, 16 MiB reusable CMA, 4 MiB alignment | `[G]` `sdm670.dtsi`; `[M]` `qseecom@9e400000` visible on a running unit |
+| App start | `QSEOS_APP_START_COMMAND = 0x01`; request `{cmd, mdt_len, img_len, phy_addr (u64), app_name[64]}` (`struct qseecom_load_app_64bit_ireq`) | `[G]` `qseecomi.h` |
+| Common library load | `QSEOS_LOAD_SERV_IMAGE_COMMAND` (same request shape, no app name); the library stays resident for the boot | `[G]` `qseecomi.h`; `[M]` |
+| Image assembly | The TA ships split: `.mdt` = ELF header + hash segment (`b00` + `b01`, byte-identical to their concatenation), then one `.bNN` per program header. The loader lays segments contiguously at `p_paddr`-relative offsets in DMA-coherent memory and passes one physical address | `[S]` manifest structure; `[G]` `qseecom.c` load path |
+| TA image | ELF64 AArch64 (`e_machine` 183), 8 program headers, **zero section headers**, but `PT_DYNAMIC` carries 1101 dynamic symbols and relocations. Segment sizes 512, 6696, 522392, 165, 57576, 720, 304, 85332 | `[S]`, `[G]` same bytes in Google's `vendor.img` |
+| `cmnlib64` image | ELF64 AArch64, 6 program headers; segments 400, 6632, 436992, 4240, 288, 30371 | `[S]`, `[G]` |
+| Listener services | Kernel reserves `RPMB_SERVICE = 0x2000` and `SSD_SERVICE = 0x3000`. Registered at runtime by the stock daemon: FS `0xa` (10), GPFS `0x7000` (28672), RPMB `0x2000` | `[G]` `qseecom.c`; `[M]` all three registered from Linux on both units |
+| One receiver per machine | Listener registration is machine-wide; a second independent receiver process is not accepted by the kernel interface | `[M]` |
 
-Flow mapping: `EnrollStart` = `11/6 → 11/9 → 11/0`, each capture `10/4 → 11/1`,
-`EnrollStop` = `11/2`. `VerifyStart` = `10/3`, then on IRQ `10/1 → 10/4 → 11/3`.
+## 4. TA command interface
 
-**Measured IRQ behavior**: the sensor asserts its interrupt at power-up and
-latches it high until TA traffic rearms the line. `init` produces ~68 IRQ
-edges; `wakeup_setup` and `deep_sleep` produce one each — so naive re-arm
-loops self-feed (blueline doc measured a 1444-event storm this way). A touch
-interrupt must never count as authentication.
+Recovered from the TA's dynamic symbols and the HAL's call sites `[S]`, then
+exercised on hardware `[M]`. Offsets are byte offsets inside the auxiliary
+buffer unless stated. All integers little-endian.
 
-### 3.3 Enrollment authorization chain (the hard part)
+### 4.1 Transport
 
-Measured on sargo, in order:
-
-1. **FPC** issues a challenge that enrollment tokens must sign.
-2. **Keymaster** (`keymaster64` TA) must be initialized first: it requires a
-   **per-boot HMAC key-sharing setup** before it will serve wrapped
-   authentication keys (exact request/reply layout recovered from stock
-   `libkeymasterdeviceutils.so` and friends; see `keymaster-negotiate.c`,
-   `keymaster-sharing.c` in pocketfed `fingerprint-trial/`).
-3. **Ordering invariant: the FPC TA must be loaded *before* Keymaster wraps its
-   authentication key.** Discovered on `test-sargo` — with FPC loaded first,
-   the wrapped-key request succeeds (`-30` otherwise).
-4. **Gatekeeper** (older, fixed-field protocol on this generation) verifies a
-   credential and returns the signed token bound to the FPC challenge; the TA
-   validates it. Gatekeeper status `-30` = secure-storage record failure.
-5. Gatekeeper's records live in **RPMB** (16 MiB region) behind QSEE storage
-   listeners **FS / GPFS / RPMB** (one receiver). Protocol details that bit us:
-   - read-request version field is **0**, not 2 (stock listener never checks it);
-   - the length field counts **256-byte payload blocks** (e.g. 34 blocks =
-     8,704 bytes), *not* 512-byte transport frames;
-   - table initialization uses **authenticated writes**; the RW metadata field
-     must be preserved as received;
-   - a safe receiver refuses RPMB key programming and stops writing after any
-     transport/device error.
-
-## 4. The Linux implementation (PocketFed)
-
-### 4.1 Kernel layer — [samcday/linux](https://github.com/samcday/linux)
-
-Fedora kernel 7.1.2 base + the [sdm670-mainline](https://gitlab.com/sdm670-mainline/linux-patches)
-patch stack. Production release `.12` = commit `3ad4e5eac8aa16c1e6dcf291fdec4fb906f803d0`
-(ARM64 [COPR build 10980882](https://copr.fedorainfracloud.org/coprs/build/10980882));
-preserved `.11` trial source = `132283913205a1db1d57fc3e563eea8224f5b79a`.
-
-| Commit | What it provides |
+| Fact | Value |
 | --- | --- |
-| `c57a78c151020` | `tee: import legacy Qualcomm QSEECOM transport` — the downstream app-loading/ioctl protocol as a TEE client |
-| `789eb5b22a489` | `tee: qseecom: support Sargo ELF64 images and harden session lifetimes` |
-| `2e950df3ef4b5` | `tee: qseecom: wipe application invoke staging before release` |
-| `cad152be638f4` | `tee: qseecom: reuse the device pool for invoke staging` — the CPU-stall fix; see [samcday/linux PR #3](https://github.com/samcday/linux/pull/3) |
-| `5efc7e2b2ca9f` | `misc: add Sargo fingerprint reset and IRQ companion` — `drivers/misc/fpc1020.c`, DT binding `google,sargo-fingerprint`, `CONFIG_FPC1020`, UAPI `linux/fpc1020.h`: exclusive misc device with IRQ counter, level snapshot, reset, opt-in wakeup. Deliberately **no sensor commands, no matching** (same split as stock) |
+| Session | HAL opens `fpctzappfingerprint` with a 128-byte primary shared buffer and an ION auxiliary buffer rounded to 4096 bytes |
+| Primary request | 64 bytes: `u32 aux_len` at 0, **unaligned** `u64 aux_phys` at 4, zero padding to 64. Response 64 bytes; first word is the dispatcher status |
+| HAL API | `QSEECom_send_modified_cmd` (32-bit patch at offset 4). The TA reads the full 64-bit field, so stock relies on a sub-4 GiB allocation with a zero high word. A native client may patch all 64 bits |
+| TA wrapper limits | request ≥ 12 bytes, response ≥ 4 bytes, aux ≤ 1 MiB (`0x46e8` in the TA) |
+| Aux layout | `u32 target` at 0, `u32 command` at 4, `i32 command_result` at 8, payload from 12 |
+| Two statuses | Dispatcher status (primary response word 0) and command result (aux offset 8) are independent; interpret payload only when both are 0 |
+| Module registry | seven targets: 12 common, 11 biometrics, 10 sensor, 9 KPI, 8 navigation, 3 hardware authentication, 2 files |
 
-Why not what's already upstream:
+### 4.2 Target 10 — sensor
 
-- mainline `qcom_qseecom` (UEFI secapp client) uses a machine allowlist — sargo
-  hits *"untested machine, skipping"*, and it assumes apps are pre-loaded by
-  firmware anyway;
-- mainline `qcomtee` implements the object-based **smcinvoke** protocol, a
-  different generation of TEE ABI — not a drop-in for the legacy app protocol
-  ([kernel docs](https://docs.kernel.org/tee/qtee.html)).
+Handler needs ≥ 84 bytes; stock uses 88 (`0x58`). Result at 8, capture detail at 12.
 
-The invoke-pool bug is worth knowing about: per-invoke TZ staging allocation
-survived initialization but left firmware-loader shutdown stalled → watchdog
-reset. The fix reuses the device-owned TZ pool (keeping coherent backing
-mappings alive across commands) while clearing/freeing each staging buffer.
-Evidence: disposable A/B comparison (only the allocator parameter changed — old
-allocator stalls, pool reuse completes), then 50 native cycles / 10 firmware
-lifetimes / 50,000 allocations / 30 clean service stops, plus a synthetic
-24-case fixture at 4 KiB and 64 KiB pages
-([pocketfed PR #62](https://github.com/samcday/pocketfed/pull/62)).
+| Cmd | Name | Notes |
+| ---: | --- | --- |
+| 0 | init | `fpc_device_init`; 0 = success |
+| 1 | check_finger_lost | returns 0/1; stock capture ignores it |
+| 2 | finger_lost_wakeup_setup | arm IRQ for finger release |
+| 3 | wakeup_setup | arm IRQ for finger contact |
+| 4 | qualify_capture | 0 = a qualified image is held for target 11 |
+| 5 | deep_sleep | 0 = success |
+| 6 | otp_supported | query |
+| 7 | otp_info | query; payload not decoded |
 
-### 4.2 Userspace layer
+Stock capture sequence (HAL `0xb488`): enable kernel IRQ wake → cmd 2, wait for
+IRQ level 1, cmd 1 → cmd 3, wait for IRQ level 1, cmd 4 → on success disable
+wake and hand the image to target 11; on failure or cancel, disable wake and
+cmd 5. The IRQ waiter reads the GPIO level first, waits on the IRQ and a cancel
+pipe, acknowledges via sysfs, rereads the level. **An IRQ is a wake signal,
+never a capture or match result.**
 
-- **Native FPC libfprint driver** (libfprint `1.94.100.x`): enrollment,
-  gallery-bound matching, deletion, cancellation; talks QSEECOM through the TEE
-  device and the `fpc1020` companion for reset/IRQ. Knows the empty-gallery
-  rule: never ask `identify` with an empty template DB (`load_empty_db` first).
-  Driver sources (latest preserved snapshot):
-  `~/src/pocketfed/out/fingerprint-kernel-pool-20260913/native-source*/`
-  (`protocol.c`, `qsee-transport.c`, `sensor.c`, `initialize.c`).
-- **QSEE loaders + storage listener daemon**: loads `cmnlib64` then
-  `fpctzappfingerprint` (in that order — §3.3), registers **FS + GPFS + RPMB**
-  listeners in one receiver. Units: `qsee-shared-loader@cmnlib64.service`,
-  `qsee-app-loader@fpctzappfingerprint.service`,
-  `pocketfed-fingerprint-firmware.service`. RPMB probe: `rpmb-counter-check.c`.
-- **Enrollment-token broker**: privileged daemon between fprintd and
-  Keymaster/Gatekeeper. Attaches only to `keymaster64`, runs the version
-  handshake and per-boot HMAC setup (idempotent), reserves Gatekeeper UIDs
-  **outside Android's user ranges** (lab credential `0x700004d2`) so enrollment
-  never clobbers Android secure state, enforces challenge-bound tokens,
-  throttling, and refusal to retry ambiguous enrollments.
-- **Firmware provisioning**: `extract-firmware.py` reads the 16 stock files
-  read-only from `vendor_b`, hash-checks against the pinned manifest, and
-  stages them device-locally (`/var/lib/firmware-updates`) so boot doesn't
-  depend on a transient vendor mapping (`--ensure` reuse path).
-- **SELinux**: a small policy module lets fprintd reach the sensor/TEE nodes
-  and the broker socket, and *not* read broker credentials. The image's
-  compiled policy was reconstructed byte-for-byte as a baseline before adding
-  the module, preserving all existing rules/contexts. Enforcing throughout.
-- **Desktop integration** (two real GNOME Settings bugs): enrollment UI hides
-  when the optional GDM settings schema is absent — patched to still show; and
-  a second-enrollment `VerifyStop`/`EnrollStart` ordering bug — fixed. Phosh
-  ships a PAM helper while preserving the distribution PAM policy byte-for-byte
-  (homed/PIN fallback intact).
+Capture results: `0x107` retry up to four times quickly (a wait > 500 ms
+resets the counter), then report "insufficient"; `0x105` = too fast,
+recapture; `0x108` silently recaptured in the enrollment loop; `-206` = general
+communication failure; `-212` = hardware error.
 
-### 4.3 Agreed behavior model
+### 4.3 Target 11 — biometrics
 
-**"PIN once after reboot, then fingerprints."** After boot, the first unlock is
-PIN (this releases the homed unlock path); fingerprints work for the rest of
-the session and enrollment persists across reboots. Fingerprint-only
-decryption of a cold encrypted home and Phrog login were explicitly de-scoped
-(`fingerprint-trial/acceptance.md`).
+Handler needs 40 bytes; offset 12 is the principal in/out word, 16–39 six more
+words. Command table at TA `0x45eb4`. Database holds at most 5 templates.
 
-## 5. Acceptance evidence (2026-09-13, `sam-sargo`)
+| Cmd | Name | Payload |
+| ---: | --- | --- |
+| 0 | begin_enrol | — |
+| 1 | enrol | out: remaining samples at 12 |
+| 2 | end_enrol | out: new template id at 12; **requires a valid enrollment authorization (§5)** |
+| 3 | identify | out: template id at 12, decision at 28 |
+| 4 | update_template | out: updated boolean at 12; must follow every identify |
+| 5 | (unsupported) | do not issue |
+| 6 | load_empty_db | destroys the in-memory database |
+| 7 | get_template_ids | in: capacity at 12; out: count at 12, ids from 16 |
+| 8 | delete_template | in: nonzero id at 12; id 0 → `-210` |
+| 9 | set_active_set | in: group id at 12 |
+| 10 | get_db_id | out: u64 at 16 |
 
-- First trial boot from validated image: 16 firmware files hash-verified, both
-  QSEE storage listeners + TA loaded first attempt, sensor `init`/`deep_sleep`
-  clean, touch registered, fprintd database created after Keymaster HMAC setup.
-- GNOME Settings: additional fingers enrolled, dialog reopen cycles,
-  matching/non-matching tester feedback.
-- Phosh: multiple enrolled fingers unlock; wrong-finger rejection; PIN fallback
-  then fingerprint; ~6 mixed Settings/lockscreen cycles confirmed by user.
-- Normal reboot preserved enrollment metadata; fingerprint socket auto-started.
-- Stability: 50 fprintd Claim/Release cycles across 10 service lifetimes +
-  50 explicit stops in **58.35 s** on the packaged `.12` stack; independent
-  UART observation showed no stall signatures.
-- Full public record: [sam-sargo#11](https://github.com/samcday/sam-sargo/issues/11);
-  engineering ledger: `~/src/pocketfed/devices/google-sargo/fingerprint-trial/`
-  (`acceptance.md`, `live-trial-20260911.md`, `image/README.md`, `lab/README.md`).
+Enrollment loop results for cmd 1: `0` complete (issue cmd 2 now), `0x10f`
+progress, `0x110` unable to process (terminate), `0x111` vendor error 1000
+(terminate), `0x112` partial (retry), `0x113` progress + vendor acquisition
+1000, `0x114` dirty image (retry). The initial sample count is not a constant.
 
-## 6. Open gaps (post-acceptance)
+A match is **only** transport 0 ∧ dispatcher 0 ∧ command 0 ∧ template id ≠ 0 ∧
+decision = 1. Command success alone includes non-matches. After every identify,
+match or not, stock issues cmd 4 (`fpc_algo_identify_update` +
+`fpc_algo_end_identify`) and stores the database only if the update boolean is
+set. Skipping cmd 4 leaves the algorithm in state 2; the next identify fails
+with `-211` (TA maps algorithm error `-115` to it). `[M]` observed on the lab
+unit.
 
-- Kernel series integration: PR #3 sits on the preserved `.11` trial branch,
-  not the maintained release branch; the whole prerequisite series needs a
-  landing review.
-- Userspace sources/tests/packaging still live as local trial snapshots —
-  need extraction into reviewable, signed-pipeline builds.
-- PocketFed `main` images do not yet contain any of this.
-- UX: Phosh's wrong-fingerprint message is too brief.
-- Reliability beyond the finite test series, and the underlying platform fault
-  behind the invoke-pool stall, are not formally established.
-- Fingerprint-only cold-home (homed) unlock remains future work by design.
+### 4.4 Target 2 — files
 
-## 7. Prior art this built on
+Cmd 11 load, cmd 12 store. Offset 12 = path length including NUL, path from 16.
+Load destroys the in-memory database before reading, so a failed load does not
+preserve the previous one. The TA's file I/O goes through the QSEE storage
+listeners (§3), so a listener must be registered before any load/store.
+
+### 4.5 Target 3 — hardware authentication
+
+Handler needs ≥ 24 bytes; results at 8.
+
+| Cmd | Name | Payload |
+| ---: | --- | --- |
+| 1 | set_auth_challenge | u64 challenge at 16 |
+| 2 | get_enrol_challenge | out u64 challenge at 16 |
+| 3 | authorize_enrol | length 69 at 12, HAT at 16 |
+| 4 | get_auth_result | length 69 at 12, out HAT at 16 |
+| 5 | import_wrapped_key | length at 12, opaque blob at 16 |
+| 6 | enrol_timeout | seconds at 12, start flag at 16, **result at 20** |
+
+## 5. Enrollment authorization chain
+
+Enrollment (target 11 cmd 2) is refused unless the TA holds an imported
+HAT-signing key, a fresh nonzero challenge, and a HAT bound to that challenge
+with a valid HMAC-SHA256 (`fpc_check_enrollment_allowance` `0x58b4` →
+validation `0x5924`). An all-zero or challenge-only token does not pass, and
+enrolling into a temporary RAM database still runs this check `[S]` `[M]`.
+
+| Step | Contract | Evidence |
+| --- | --- | --- |
+| HAT format | 69 bytes: version (u8, must be 0), challenge (u64), secure user id (u64), authenticator id (u64), authenticator type (u32, **network order**), timestamp (u64, **network order**), HMAC-SHA256 (32 bytes) over the first 37 bytes | `[S]` TA + Android HAT definition |
+| Challenge lifetime | ~10 minutes | `[S]` |
+| Wrapped key source | HAL opens `keymaster64` with a 1024-byte shared buffer, sends a 64-byte request starting `{0x205, 2}`, receives ≤ 960 bytes: `{status, blob offset, blob length, blob…}`. Observed blob: 152 bytes. FPC unwraps it in secure world and checks the source app name is `keymaster64` (`fpc_ta_hw_auth_unwrap_key` `0x60fc`) | `[S]`, `[M]` |
+| Keymaster version handshake | `GET_VERSION 0x200` (4-byte request) → status + `[4, 0, 4, 165]` (TA API major/minor, TA major/minor). `SET_VERSION 0x207` = six words `[0x207, 4, 5, 4, 5, 0]`. SET takes effect **once per loaded TA instance**; later SETs are silently ignored and GET does not read back client settings | `[S]` `libkeymasterdeviceutils.so` constructor `0x22d8`; `[M]` |
+| Per-boot HMAC agreement | Until done, `0x205` returns status `-24` (`km_get_auth_token_key` `0xb548` → uninitialized shared-HMAC flag at `0x2a18`). Sequence: `0x20e GET_HMAC_PARAMETERS` → 64-byte seed/nonce, then `0x20f COMPUTE_SHARED_HMAC` (76-byte request, single participant) → 32-byte sharing check. Android does this through the Keymaster HAL at boot | `[S]`, `[M]` |
+| **Ordering rule A** | `cmnlib64` must be resident before `fpctzappfingerprint` loads (`DT_NEEDED libcmnlib.so`; ELF64 class selects the 64-bit library) | `[S]`, `[M]` load fails otherwise |
+| **Ordering rule B** | `fpctzappfingerprint` must be resident before Keymaster is asked for the wrapped key. Keymaster resolves the recipient by name (`get_fpta_name`, default `fingerprint`) and encapsulates the key for that app (`qsee_encapsulate_inter_app_message`, `0xb77c`). With FPC absent the request failed with `0xff000fff`; with FPC loaded first the identical request returned a valid key | `[S]`, `[M]` lab unit A/B runs, 2026-09-11 |
+| Gatekeeper protocol | Inside `keymaster64`, security level 1 (TEE). Older fixed-field format, **not** the CBOR format of newer Qualcomm firmware. `0x1001` enroll, `0x1002` verify. 32-byte header: cmd u32 @0, Gatekeeper uid u32 @4; enroll: old-handle (off,len) @8, old-password (off,len) @16, new-password (off,len) @24; verify: challenge u64 @8, handle (off,len) @16, password (off,len) @24. Payloads appended unpadded. Reply: status i32 @0, blob offset @4, blob length @8, blob @12. Enroll returns a 58-byte handle (secure user id at byte 1); verify returns a 69-byte HAT. Negative status = failure, positive = throttle seconds, never success. Shared buffer `0xa000` bytes, response capacity = `0xa000` − request length | `[S]` `keymaster_b` image; `[M]` enrollment and verification completed on the lab unit |
+| Gatekeeper `-30` | Record acquisition failure: the TA could not read its credential table from RPMB. Not a bad-password result | `[S]` verify handler `0x9c00` → `0x9ee0` → storage init `0xf998`; `[M]` reproduced with a synthetic invalid handle |
+| Gatekeeper uid space | One numeric table shared with Android. Android 12 user ids stay below 21474 and synthetic-password credentials use `userId` or `100000 + userId`, so ids ≥ `0x70000000` cannot collide with Android's | `[G]` [UserManagerService](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-12.1.0_r1/services/core/java/com/android/server/pm/UserManagerService.java), [SyntheticPasswordManager](https://android.googlesource.com/platform/frameworks/base/+/refs/tags/android-12.1.0_r1/services/core/java/com/android/server/locksettings/SyntheticPasswordManager.java) |
+
+Stock flow, in order: Keymaster HAL at boot does the HMAC agreement → FPC HAL
+loads `cmnlib64`, then the TA, then imports the wrapped key (target 3 cmd 5) →
+on enroll, target 3 cmd 2 yields a challenge → Gatekeeper verifies the user's
+credential against that challenge and returns a HAT → target 3 cmd 3 → target
+11 cmds 0/1…/2.
+
+## 6. Secure storage (RPMB listener)
+
+Gatekeeper's table lives in the eMMC RPMB partition and is reached through
+listener `0x2000`. The wire format is Qualcomm's RPMB listener protocol as
+implemented in LK (`platform/msm_shared/rpmb/rpmb_listener.c`) `[T]` and in
+stock `librpmb.so` (version-2 layout) `[S]`. What the sargo firmware actually
+sends `[M]`, lab unit, 2026-09-11:
+
+| Fact | Value |
+| --- | --- |
+| Commands | `0x101` init, `0x102` read, `0x103` write, `0x104` partition configuration (stock consults `/system/etc/rpmb_sec_parti.cfg`); listener shared memory 25 KiB |
+| Read request | one 512-byte RPMB frame at offset 24; the declared length is **payload bytes**, `count × 256` (observed count 34 → 8704), not frame bytes |
+| RW version field | 0 on reads, `0x100` on the observed write. Stock and LK preserve it without interpreting it; it is not the init negotiation version |
+| Gatekeeper table init | reads of 34 and 14 frames (24 logical 512-byte sectors), then a 2-frame **authenticated reliable write** (length 1024, offset 24, group 2) |
+| RPMB device | 16 MiB, enhanced RPMB supported, `rel_sectors = 1`; stock advertises 32 reliable frames when enhanced RPMB is present |
+| MMC shape | CMD25 (reliable-write bit) carrying the request frames, then CMD18 for one result frame; counter read = request type 2 |
+| Key programming | never issued by the TA in any observed sequence; a receiver may refuse it outright |
+
+## 7. Interrupt behaviour
+
+| Observation | Evidence |
+| --- | --- |
+| The line idles low (pull-down) and rises on sensor events; the kernel counts edges | `[G]` driver |
+| Target 10 `init` then `deep_sleep` complete with all statuses 0 and no spurious activity | `[M]` daily unit, 2026-09-11 |
+| One arm → touch → `qualify_capture` cycle advanced the edge counter from 120 to 144 | `[M]` daily unit, 2026-09-11 |
+| On Pixel 3 (blueline, same TA name and command set) `init` produces about 68 edges, `wakeup_setup` and `deep_sleep` one each; a loop that re-arms on every edge feeds itself (1444-event storm) | `[T]` [SouveraineOS task 44](https://forge.caseytunturi.com/Fimeg/SouveraineOS/src/branch/public/docs/tasks/44-fingerprint-fpc1020.md) ([archived 2026-09-14](https://web.archive.org/web/20260914045432/https://forge.caseytunturi.com/Fimeg/SouveraineOS/raw/branch/public/docs/tasks/44-fingerprint-fpc1020.md)); not re-measured on sargo |
+
+## 8. Proof: an independent implementation
+
+The contract above is exercised by a native Linux stack with no Android
+userspace: a mainline-based kernel carrying the legacy QSEECOM transport as a
+TEE driver plus a reset/IRQ companion, a listener daemon serving FS, GPFS and
+RPMB, a Keymaster/Gatekeeper broker, and a libfprint driver. On 2026-09-13
+it enrolled several fingers through GNOME Settings and unlocked the Phosh
+lockscreen with them on a Pixel 3a, rejecting non-enrolled fingers, with
+enrollments surviving reboot. Earlier lab runs on a second sargo unit
+established each link of §5 and §6 in isolation. `[I]`
+
+- Kernel: [samcday/linux](https://github.com/samcday/linux) (QSEECOM transport, ELF64 app loading, `fpc1020` companion; e.g. [PR #3](https://github.com/samcday/linux/pull/3) for the invoke-buffer fix).
+- Userspace and device integration: [samcday/pocketfed](https://github.com/samcday/pocketfed), device `google-sargo`.
+
+Why the in-tree drivers were not enough: mainline `qcom_qseecom` is a client
+for the firmware-preloaded UEFI secure app with a machine allowlist (sargo:
+"untested machine, skipping"), and mainline `qcomtee` speaks the object-based
+smcinvoke ABI ([kernel docs](https://docs.kernel.org/tee/qtee.html)), a
+different generation from the legacy QSEOS app protocol this firmware uses.
+
+## 9. Prior art
 
 | Work | Contribution | Archive |
 | --- | --- | --- |
-| [wrobelda/goodix-fp-spi-linux](https://github.com/wrobelda/goodix-fp-spi-linux) (+ [`qcom-qseecom-tee` kernel branch](https://github.com/wrobelda/linux/tree/qcom-qseecom-tee), [qsee-supplicant](https://github.com/wrobelda/qsee-supplicant)) | legacy QSEECOM transport through the TEE subsystem; app loading, shared buffers, listeners; Goodix `gfenu` on SM8250 | [repo](https://web.archive.org/web/20260914045413/https://github.com/wrobelda/goodix-fp-spi-linux) · [supplicant](https://web.archive.org/web/20260914050014/https://github.com/wrobelda/qsee-supplicant) |
-| [SouveraineOS task 44 (Pixel 3 / blueline FPC1020)](https://forge.caseytunturi.com/Fimeg/SouveraineOS/src/branch/public/docs/tasks/44-fingerprint-fpc1020.md) | the FPC TA protocol reconstruction used to seed §3.2 | [archived](https://web.archive.org/web/20260914045432/https://forge.caseytunturi.com/Fimeg/SouveraineOS/raw/branch/public/docs/tasks/44-fingerprint-fpc1020.md) |
-| [Catcrafts fingerprintd (Fairphone 6)](https://forgejo.catcrafts.net/Catcrafts/fingerprintd) | native daemon lifecycle reference (Focaltech `focal64`, newer QTEE — different path) | [archived](https://web.archive.org/web/20260914050108/https://forgejo.catcrafts.net/Catcrafts/fingerprintd) |
-| Stock GPLv2 FPC driver + board DT | exact sargo reset/IRQ electricals | §1/§2.3 links |
-| [Pixel 3a stock boot trace](https://gist.github.com/tanyeun/64a7a54410b14195aac60c8bca8285ab) | confirms TA/`qseecomd` flow on device | [archived](https://web.archive.org/web/20260914045252/https://gist.github.com/tanyeun/64a7a54410b14195aac60c8bca8285ab) |
+| [wrobelda/goodix-fp-spi-linux](https://github.com/wrobelda/goodix-fp-spi-linux), [`qcom-qseecom-tee` kernel branch](https://github.com/wrobelda/linux/tree/qcom-qseecom-tee), [qsee-supplicant](https://github.com/wrobelda/qsee-supplicant) | Legacy QSEECOM through the Linux TEE subsystem; listeners; Gatekeeper notes for a newer (CBOR) Qualcomm firmware | [archived 2026-09-14](https://web.archive.org/web/20260914045413/https://github.com/wrobelda/goodix-fp-spi-linux) · [supplicant](https://web.archive.org/web/20260914050014/https://github.com/wrobelda/qsee-supplicant) |
+| [SouveraineOS task 44 (Pixel 3 / blueline)](https://forge.caseytunturi.com/Fimeg/SouveraineOS/src/branch/public/docs/tasks/44-fingerprint-fpc1020.md) | FPC TA command numbering and IRQ measurements on blueline; its raw-IRQ PAM bridge is not authentication | [archived 2026-09-14](https://web.archive.org/web/20260914045432/https://forge.caseytunturi.com/Fimeg/SouveraineOS/raw/branch/public/docs/tasks/44-fingerprint-fpc1020.md) |
+| [Catcrafts fingerprintd (Fairphone 6)](https://forgejo.catcrafts.net/Catcrafts/fingerprintd) | Native daemon lifecycle reference; Focaltech sensor on newer QTEE, different path | [archived 2026-09-14](https://web.archive.org/web/20260914050108/https://forgejo.catcrafts.net/Catcrafts/fingerprintd) |
+| [Pixel 3a stock boot trace](https://gist.github.com/tanyeun/64a7a54410b14195aac60c8bca8285ab) | Shows `qseecomd` and the TA loading during an Android 9 boot | [archived 2026-09-14](https://web.archive.org/web/20260914045252/https://gist.github.com/tanyeun/64a7a54410b14195aac60c8bca8285ab) |
+| [lk2nd](https://github.com/msm8916-mainline/lk2nd) `platform/msm_shared/rpmb/` (commit `4a88d4cc9d6da226a90e55f2a0e66f7179a0b79b`) | Open implementation of the RPMB listener protocol (0x101–0x103) | — |
 
-## 8. Verify it yourself
+## 10. Open questions
 
-```sh
-# Stock DT contract (live + archived above)
-curl -s 'https://android.googlesource.com/kernel/msm/+/refs/heads/android-msm-bonito-4.9-android12L/arch/arm64/boot/dts/google/sdm670-b4s4-fingerprint.dtsi?format=TEXT' | base64 -d
-
-# Firmware manifest pinned to the final OTA build
-jq . ~/src/pocketfed/devices/google-sargo/fingerprint-trial/firmware-manifest.json
-
-# Kernel series, from the .12 production tree
-git -C ~/src/pocketfed-kernel-fpc-pool show --stat \
-  5efc7e2b2ca9f cad152be638f4 c57a78c151020 789eb5b22a489
-
-# Public acceptance record
-gh issue view 11 -R samcday/sam-sargo
-```
+- Sensor die revision and secure SPI controller routing are not measured.
+- Target 10 cmd 1's boolean semantics and cmd 7's payload are not decoded.
+- Names of the six identify diagnostics words (aux 16–39) beyond `decision` are unconfirmed.
+- Whether the TA ever issues RPMB `0x104` (partition configuration) on a fresh table.
+- The precise meaning of Keymaster status `0xff000fff` beyond "recipient not resident".
+- Blueline's IRQ edge counts have not been re-measured on sargo.
