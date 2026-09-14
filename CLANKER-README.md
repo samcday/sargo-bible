@@ -48,8 +48,10 @@ If the Wayback Machine has no snapshot, request one
 quote (GPLv2 kernel sources, JSON manifests). Each vendored tree has a
 `SHA256SUMS` and a note recording where it came from and the exact commit.
 Never vendor proprietary firmware bytes or anything derived from them beyond
-lengths, hashes and structural metadata. Do not vendor multi-gigabyte trees;
-pin them by hash and give the fetch command.
+lengths, hashes and structural metadata. Do not vendor multi-gigabyte trees or
+Google's image blobs; pin them by SHA-256 in `artifacts/<BUILD>.json` with
+every known mirror, and mirror the blob as a GitHub release asset
+(`stock-<BUILD>`), never in Git LFS.
 
 ## 5. What is not bible material
 

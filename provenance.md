@@ -30,6 +30,8 @@ it. Evidence classes: see [CLANKER-README.md](CLANKER-README.md).
 | boot.img | 67,108,864 bytes, SHA-256 `4fff7d43dbf56e213a420e20acddfab42596a39c3b0f6dcd0d04c0e37b86f5ed`; header v2, page 4096, kernel 20,498,956 bytes (LZ4), ramdisk 14,258,512, DTB 1,240,260 at `0x1f00000`, OS 12.0.0 / 2022-05 | `[G]` factory image, `image-sargo-sp2a.220505.008.zip` |
 | Stock kernel cmdline | `console=ttyMSM0,115200n8 androidboot.console=ttyMSM0 printk.devkmsg=on msm_rtb.filter=0x237 ehci-hcd.park=3 service_locator.enable=1 firmware_class.path=/vendor/firmware cgroup.memory=nokmem lpm_levels.sleep_disabled=1 loop.max_part=7 androidboot.boot_devices=soc/7c4000.sdhci androidboot.super_partition=system buildvariant=user` | `[G]` boot.img header |
 | Vendor blobs | `google_devices-sargo-sp2a.220505.008-772e1993.tgz`, `qcom-sargo-sp2a.220505.008-8c718226.tgz` | `[G]` [driver binaries page](https://developers.google.com/android/drivers#sargosp2a.220505.008) |
+| OTA package | `sargo-ota-sp2a.220505.008-2037245c.zip`, 1,521,778,558 bytes, SHA-256 `2037245c06c8e0912c098c347be7b49a707d7cacf9a663ad7e68c96ce75ea32b` | `[G]` [download](https://dl.google.com/dl/android/aosp/sargo-ota-sp2a.220505.008-2037245c.zip), hash verified 2026-09-14 |
+| Mirrors | Every file above is mirrored as a GitHub release asset ([`stock-SP2A.220505.008`](https://github.com/samcday/sargo-bible/releases/tag/stock-SP2A.220505.008)); manifest with hashes and mirror order in [`artifacts/`](artifacts/) | `[G]` bytes identical to Google's, verified by SHA-256 |
 
 ## 3. The kernel source
 
@@ -38,6 +40,7 @@ it. Evidence classes: see [CLANKER-README.md](CLANKER-README.md).
 | Shipped kernel | `Linux version 4.9.292-gab4493f31457-ab8272301 (android-build@abfarm592) (Android (7284624, based on r416183b) clang version 12.0.5 …)` | `[G]` string inside the decompressed kernel from `boot.img` |
 | Source commit | `kernel/msm` **`ab4493f31457eea175568b18b8300d4d12aaeea8`**, committed 2022-03-08 (`Merge branch 'android-msm-pixel-4.9-sc-security' into android-msm-pixel-4.9-sc-v2`); `Makefile` says 4.9.292 | `[G]` [commit](https://android.googlesource.com/kernel/msm/+/ab4493f31457eea175568b18b8300d4d12aaeea8). The `-g` suffix of the shipped version string is this hash |
 | Branch and tags | head of `android-msm-bonito-4.9-android12L`; tags `android-12.1.0_r0.17` and `android-12.1.0_r0.23` | `[G]` googlesource refs, 2026-09-14 |
+| Archived copy | Software Heritage revision [`swh:1:rev:ab4493f31457eea175568b18b8300d4d12aaeea8`](https://archive.softwareheritage.org/swh:1:rev:ab4493f31457eea175568b18b8300d4d12aaeea8;origin=https://android.googlesource.com/kernel/msm); the origin snapshot of 2026-09-14 carries the branch at this commit | `[G]` SWH API, 2026-09-14 |
 | Build recipe | [`kernel/manifest`](https://android.googlesource.com/kernel/manifest/+/refs/heads/android-msm-bonito-4.9-android12L/default.xml) branch `android-msm-bonito-4.9-android12L`: `kernel/msm` at `private/msm-google`, `kernel/msm-extra` (audio techpack), three `qcacld-3.0` WLAN projects, clang from `platform/prebuilts/clang/host/linux-x86`. `build.config.bonito` selects `bonito_defconfig` | `[G]` |
 | Config facts used by chapters | `CONFIG_QSEECOM=y`, `CONFIG_FPC_FINGERPRINT=y` | `[G]` `bonito_defconfig` at the commit |
 | DT layout | `boot.img` carries the SoC base DTB (`sdm670.dtsi` tree); board content, including the fingerprint node, is applied from `dtbo.img` overlays selected by board id | `[G]` decompiled `boot.img` DTB and `dtbo.img` |
@@ -175,16 +178,21 @@ chapters refer to the exact files hashed above.
 
 ## 7. Not yet pinned
 
-- The Google-published SHA-256 for the factory image was read from a
-  third-party mirror listing; the download hash above was computed locally and
-  matches the filename prefix, but the developers.google.com page itself is
-  JavaScript-rendered and was not archived on 2026-09-14 (Wayback Machine was
-  offline).
+- The developers.google.com image, OTA and driver pages are
+  JavaScript-rendered and could not be archived on 2026-09-14 (Wayback Machine
+  offline for most of the day). The SHA-256 values above were computed from
+  downloads of Google's URLs and match the hash prefixes Google embeds in the
+  filenames.
+- No Internet Archive *item* exists yet for this build's factory image or OTA
+  (older sargo builds have them). Upload is pending an archive.org account.
+- Wayback captures of the factory zip: the 2022-09-07 capture was downloaded
+  and hashes identically to Google's file (verified 2026-09-14). The
+  2025-01-30 capture is listed in the manifest but not yet download-verified.
+  No Wayback capture of the driver tarballs is known.
 - Sargo's `vendor.img` and `vendor_b` differ from `.002` only by build
   identity as far as the 16 fingerprint files and the libraries above are
   concerned; a whole-filesystem diff between `.002`, `.006` and `.008` has not
   been done.
-- Google's OTA package for `.008` was not downloaded or hashed.
 
 ## 8. Verify it yourself
 
