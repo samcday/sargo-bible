@@ -1,0 +1,10 @@
+b365fd73986f466af2a687146f866c64603a216ac07a4afd2d0f796c6edd36eb  ./arch/arm64/boot/dts/google/sdm670-b4s4-common.dtsi
+36187ab69a839297b79d908b68565fda1ac02bfc5f5cbe2ee1b1d71ac8ba56c4  ./arch/arm64/boot/dts/google/sdm670-b4s4-fingerprint.dtsi
+e86f49b7f48abcf0dbafbca24d64b524dd32f7f3c1f04a0d97ff8521fc737f61  ./arch/arm64/boot/dts/qcom/sdm670.dtsi
+a46a9908c3e31f06774e45da3700274e4c77bd476845c57630336bf7f0a437fa  ./arch/arm64/configs/bonito_defconfig
+a9b89bb523537057aad624ec29742cadcb110df8714335daf50d5354eabb1835  ./build.config.bonito
+61e9d120c237e6164969528ac4229098d1c133ec5cd9e2c52b3493158f063dd5  ./drivers/input/misc/fpc_fingerprint/fpc1020_platform_tee.c
+47f74cb09f7a7968f7321727cd3cf6dfe2f3539fd417d320b828062bdabcc020  ./drivers/input/misc/fpc_fingerprint/Kconfig
+63b8bf4549561b7325b5e4ebc8b880eb16228b8c346359d829dd2fe02bd1ea70  ./drivers/input/misc/fpc_fingerprint/Makefile
+f269dbdb23ae3ceb1409ae375f0f0bab441627e78b88c5e0f265620b994af1a8  ./include/soc/qcom/qseecomi.h
+801531b199f27dc52dd4207a85745128f022fda8173656d498247418601cc77b  ./include/uapi/linux/qseecom.h

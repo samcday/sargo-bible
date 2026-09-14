@@ -1,0 +1,66 @@
+{
+  "build": "SP2A.220505.008",
+  "incremental": "8782922",
+  "fingerprint": "google/sargo/sargo:12/SP2A.220505.008/8782922:user/release-keys",
+  "aosp_tag": "android-12.1.0_r27",
+  "kernel_commit": "ab4493f31457eea175568b18b8300d4d12aaeea8",
+  "kernel_swhid": "swh:1:rev:ab4493f31457eea175568b18b8300d4d12aaeea8;origin=https://android.googlesource.com/kernel/msm",
+  "artifacts": [
+    {
+      "name": "sargo-sp2a.220505.008-factory-071e368a.zip",
+      "kind": "factory image",
+      "bytes": 1906636795,
+      "sha256": "071e368a127ce5a3c553f8b717895eaf1e44dec78971dc4c80baa7237d2d37f1",
+      "canonical": "https://dl.google.com/dl/android/aosp/sargo-sp2a.220505.008-factory-071e368a.zip",
+      "listed_at": "https://developers.google.com/android/images#sargo",
+      "mirrors": [
+        "https://dl.google.com/dl/android/aosp/sargo-sp2a.220505.008-factory-071e368a.zip",
+        "https://github.com/samcday/sargo-bible/releases/download/stock-SP2A.220505.008/sargo-sp2a.220505.008-factory-071e368a.zip",
+        "https://web.archive.org/web/20250130153638id_/https://dl.google.com/dl/android/aosp/sargo-sp2a.220505.008-factory-071e368a.zip",
+        "https://web.archive.org/web/20220907050215id_/https://dl.google.com/dl/android/aosp/sargo-sp2a.220505.008-factory-071e368a.zip"
+      ],
+      "contains": {
+        "bootloader-sargo-b4s4-0.4-8048689.img": "3db0d003dd65ecf30caf515bfe3563ee760ae7004577483c67915b9b6870ab67",
+        "radio-sargo-g670-00145-220106-b-8048689.img": "74f7eb3c384cf76e93b487d081650665c4d066ec305ab82972aef795ef729836",
+        "image-sargo-sp2a.220505.008.zip/boot.img": "4fff7d43dbf56e213a420e20acddfab42596a39c3b0f6dcd0d04c0e37b86f5ed"
+      }
+    },
+    {
+      "name": "sargo-ota-sp2a.220505.008-2037245c.zip",
+      "kind": "full OTA package",
+      "bytes": 1521778558,
+      "sha256": "2037245c06c8e0912c098c347be7b49a707d7cacf9a663ad7e68c96ce75ea32b",
+      "canonical": "https://dl.google.com/dl/android/aosp/sargo-ota-sp2a.220505.008-2037245c.zip",
+      "listed_at": "https://developers.google.com/android/ota#sargo",
+      "mirrors": [
+        "https://dl.google.com/dl/android/aosp/sargo-ota-sp2a.220505.008-2037245c.zip",
+        "https://github.com/samcday/sargo-bible/releases/download/stock-SP2A.220505.008/sargo-ota-sp2a.220505.008-2037245c.zip",
+        "https://web.archive.org/web/20220907061623id_/https://dl.google.com/dl/android/aosp/sargo-ota-sp2a.220505.008-2037245c.zip"
+      ]
+    },
+    {
+      "name": "google_devices-sargo-sp2a.220505.008-772e1993.tgz",
+      "kind": "Google vendor binaries (driver page)",
+      "bytes": 257100911,
+      "sha256": "702c4563207f77eefa7822ffbfaf0cc8a33059140f417b2deda1844ae4bb097c",
+      "canonical": "https://dl.google.com/dl/android/aosp/google_devices-sargo-sp2a.220505.008-772e1993.tgz",
+      "listed_at": "https://developers.google.com/android/drivers#sargosp2a.220505.008",
+      "mirrors": [
+        "https://dl.google.com/dl/android/aosp/google_devices-sargo-sp2a.220505.008-772e1993.tgz",
+        "https://github.com/samcday/sargo-bible/releases/download/stock-SP2A.220505.008/google_devices-sargo-sp2a.220505.008-772e1993.tgz"
+      ]
+    },
+    {
+      "name": "qcom-sargo-sp2a.220505.008-8c718226.tgz",
+      "kind": "Qualcomm vendor binaries (driver page)",
+      "bytes": 1579369,
+      "sha256": "cbcf1221a665c8749ddd65139d6aece364b4fe32b9c2a7ed590de6bd271bc188",
+      "canonical": "https://dl.google.com/dl/android/aosp/qcom-sargo-sp2a.220505.008-8c718226.tgz",
+      "listed_at": "https://developers.google.com/android/drivers#sargosp2a.220505.008",
+      "mirrors": [
+        "https://dl.google.com/dl/android/aosp/qcom-sargo-sp2a.220505.008-8c718226.tgz",
+        "https://github.com/samcday/sargo-bible/releases/download/stock-SP2A.220505.008/qcom-sargo-sp2a.220505.008-8c718226.tgz"
+      ]
+    }
+  ]
+}
