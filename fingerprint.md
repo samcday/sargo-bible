@@ -23,7 +23,7 @@ fingerprint service, `HAT` = hardware authentication token.
 | Regulators | None declared for the sensor in the sargo DT; the driver's optional regulator lookups are unused | `[G]` dtsi vs driver `vreg_conf` table |
 | Part revision | Not measured. `fpc,fpc1020` names the driver family, not a die step | open, §10 |
 
-Shipped DT node (from the `S4 PVT` overlay, decompiled; identical in source):
+Node as written in the source dtsi; the decompiled `S4 PVT` overlay from Google's `dtbo.img` carries the same values (`interrupts = <0x79 0x00>`, reset `0x86`, IRQ `0x79`):
 
 ```dts
 fp_fpc1020 {
